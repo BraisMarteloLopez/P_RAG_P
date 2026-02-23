@@ -3,21 +3,9 @@ Test DT-7 #8: metadata["reranked"] se propaga al detail CSV.
 Columna 'reranked' con valor True, False, o vacio segun el caso.
 """
 import csv
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-for mod in [
-    "boto3", "botocore", "botocore.exceptions",
-    "langchain_nvidia_ai_endpoints", "langchain_core",
-    "langchain_core.messages", "langchain_core.documents",
-    "langchain_core.embeddings", "langchain_chroma", "chromadb",
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
 
 from shared.types import (
     EvaluationRun, EvaluationStatus, QueryEvaluationResult,

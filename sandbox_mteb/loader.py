@@ -109,56 +109,11 @@ class MinIOLoader:
         )
 
         try:
-            qrels: Dict[str, List[str]] = {}
-
-            # Queries
             queries_df = self._download_parquet(f"{dataset_name}/queries.parquet")
-            if queries_df is not None:
-                result.total_queries = len(queries_df)
-                for _, row in queries_df.iterrows():
-                    qid = str(row.get("query_id", ""))
-                    # answer_type: leer de parquet si existe, fallback a inferencia
-                    raw_answer = str(row.get("answer", "")) if row.get("answer") else ""
-                    raw_answer_type = str(row.get("answer_type", ""))
-                    if not raw_answer_type and raw_answer:
-                        raw_answer_type = "text"
-
-                    # question_type: campo nuevo (v2.0), fallback a "type" (v1.0)
-                    question_type = str(row.get("question_type", "") or row.get("type", ""))
-
-                    result.queries.append(NormalizedQuery(
-                        query_id=qid,
-                        query_text=str(row.get("text", "")),
-                        expected_answer=raw_answer or None,
-                        answer_type=raw_answer_type or None,
-                        metadata={
-                            "question_type": question_type,
-                            "level": str(row.get("level", "")),
-                        },
-                    ))
-
-            # Corpus
             corpus_df = self._download_parquet(f"{dataset_name}/corpus.parquet")
-            if corpus_df is not None:
-                result.total_corpus = len(corpus_df)
-                for _, row in corpus_df.iterrows():
-                    did = str(row.get("doc_id", ""))
-                    result.corpus[did] = NormalizedDocument(
-                        doc_id=did,
-                        title=str(row.get("title", "")),
-                        content=str(row.get("text", "")),
-                    )
-
-            # Qrels
             qrels_df = self._download_parquet(f"{dataset_name}/qrels.parquet")
-            if qrels_df is not None:
-                for _, row in qrels_df.iterrows():
-                    qid = str(row.get("query_id", ""))
-                    did = str(row.get("doc_id", ""))
-                    qrels.setdefault(qid, []).append(did)
 
-            for query in result.queries:
-                query.relevant_doc_ids = qrels.get(query.query_id, [])
+            self._populate_from_dataframes(result, queries_df, corpus_df, qrels_df)
 
             # Metadata
             result.metadata = self._download_json(f"{dataset_name}/metadata.json") or {}
@@ -177,6 +132,65 @@ class MinIOLoader:
             result.load_status = "error"
             result.error_message = str(e)
             return result
+
+    # -----------------------------------------------------------------
+    # PRIVATE: DataFrame -> LoadedDataset (FIX DTm-1)
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _populate_from_dataframes(
+        result: LoadedDataset,
+        queries_df,
+        corpus_df,
+        qrels_df,
+    ) -> None:
+        """
+        Puebla un LoadedDataset a partir de DataFrames de queries, corpus y qrels.
+
+        Extraido de load_dataset() y _load_from_cache() para eliminar
+        duplicacion (~50 lineas identicas).
+        """
+        qrels: Dict[str, List[str]] = {}
+
+        if queries_df is not None:
+            result.total_queries = len(queries_df)
+            for _, row in queries_df.iterrows():
+                qid = str(row.get("query_id", ""))
+                raw_answer = str(row.get("answer", "")) if row.get("answer") else ""
+                raw_answer_type = str(row.get("answer_type", ""))
+                if not raw_answer_type and raw_answer:
+                    raw_answer_type = "text"
+                question_type = str(row.get("question_type", "") or row.get("type", ""))
+
+                result.queries.append(NormalizedQuery(
+                    query_id=qid,
+                    query_text=str(row.get("text", "")),
+                    expected_answer=raw_answer or None,
+                    answer_type=raw_answer_type or None,
+                    metadata={
+                        "question_type": question_type,
+                        "level": str(row.get("level", "")),
+                    },
+                ))
+
+        if corpus_df is not None:
+            result.total_corpus = len(corpus_df)
+            for _, row in corpus_df.iterrows():
+                did = str(row.get("doc_id", ""))
+                result.corpus[did] = NormalizedDocument(
+                    doc_id=did,
+                    title=str(row.get("title", "")),
+                    content=str(row.get("text", "")),
+                )
+
+        if qrels_df is not None:
+            for _, row in qrels_df.iterrows():
+                qid = str(row.get("query_id", ""))
+                did = str(row.get("doc_id", ""))
+                qrels.setdefault(qid, []).append(did)
+
+        for query in result.queries:
+            query.relevant_doc_ids = qrels.get(query.query_id, [])
 
     # -----------------------------------------------------------------
     # PRIVATE: S3
@@ -242,48 +256,11 @@ class MinIOLoader:
             secondary_metrics=ds_config.get("secondary_metrics", []),
         )
 
-        qrels: Dict[str, List[str]] = {}
-
         queries_df = pd.read_parquet(queries_path)
-        result.total_queries = len(queries_df)
-        for _, row in queries_df.iterrows():
-            qid = str(row.get("query_id", ""))
-            raw_answer = str(row.get("answer", "")) if row.get("answer") else ""
-            raw_answer_type = str(row.get("answer_type", ""))
-            if not raw_answer_type and raw_answer:
-                raw_answer_type = "text"
-            question_type = str(row.get("question_type", "") or row.get("type", ""))
-
-            result.queries.append(NormalizedQuery(
-                query_id=qid,
-                query_text=str(row.get("text", "")),
-                expected_answer=raw_answer or None,
-                answer_type=raw_answer_type or None,
-                metadata={
-                    "question_type": question_type,
-                    "level": str(row.get("level", "")),
-                },
-            ))
-
         corpus_df = pd.read_parquet(corpus_path)
-        result.total_corpus = len(corpus_df)
-        for _, row in corpus_df.iterrows():
-            did = str(row.get("doc_id", ""))
-            result.corpus[did] = NormalizedDocument(
-                doc_id=did,
-                title=str(row.get("title", "")),
-                content=str(row.get("text", "")),
-            )
+        qrels_df = pd.read_parquet(qrels_path) if qrels_path.exists() else None
 
-        if qrels_path.exists():
-            qrels_df = pd.read_parquet(qrels_path)
-            for _, row in qrels_df.iterrows():
-                qid = str(row.get("query_id", ""))
-                did = str(row.get("doc_id", ""))
-                qrels.setdefault(qid, []).append(did)
-
-        for query in result.queries:
-            query.relevant_doc_ids = qrels.get(query.query_id, [])
+        self._populate_from_dataframes(result, queries_df, corpus_df, qrels_df)
 
         result.load_status = "success"
         return result

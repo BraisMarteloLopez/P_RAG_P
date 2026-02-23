@@ -2,23 +2,9 @@
 Test DT-7 #5: Rerank exitoso -> reranked_ok=True, _rerank_failures=0.
 Test DT-7 #6: Rerank fallido -> reranked_ok=False, _rerank_failures incrementa.
 """
-import sys
-from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-# Mock de modulos de infra para evitar ImportError (boto3, langchain, etc.)
 from unittest.mock import MagicMock
-for mod in [
-    "boto3", "botocore", "botocore.exceptions",
-    "langchain_nvidia_ai_endpoints", "langchain_core",
-    "langchain_core.messages", "langchain_core.documents",
-    "langchain_core.embeddings", "langchain_chroma", "chromadb",
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
 
 from shared.retrieval.core import RetrievalResult, RetrievalStrategy, RetrievalConfig
 from shared.config_base import InfraConfig, RerankerConfig

@@ -25,15 +25,13 @@ if str(project_root) not in sys.path:
 from sandbox_mteb.config import MTEBConfig
 from sandbox_mteb.evaluator import MTEBEvaluator
 from shared.report import RunExporter
+from shared.structured_logging import configure_logging
 
 
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    # DT-3: configure_logging lee LOG_FORMAT del entorno ("text" o "jsonl")
+    configure_logging(level=level)
     # Reducir ruido de libs externas
     logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("botocore").setLevel(logging.WARNING)

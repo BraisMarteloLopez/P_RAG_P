@@ -5,20 +5,7 @@ Test DTm-5 #13: El fallo emite logger.warning con tipo de metrica y query.
 """
 import asyncio
 import logging
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-for mod in [
-    "boto3", "botocore", "botocore.exceptions",
-    "langchain_nvidia_ai_endpoints", "langchain_core",
-    "langchain_core.messages", "langchain_core.documents",
-    "langchain_core.embeddings", "langchain_chroma", "chromadb",
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
 
 from shared.types import DatasetType, MetricType, get_dataset_config
 from shared.metrics import MetricsCalculator, MetricResult

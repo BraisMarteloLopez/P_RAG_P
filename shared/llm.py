@@ -8,12 +8,13 @@ Consolida llm.py + embeddings.py.
 
 Fixes aplicados:
   - asyncio.Lock se crea en __post_init__ (no en default de dataclass)
-  - invoke() sync usa _run_async() con asyncio.run()
+  - invoke() sync usa run_sync() con asyncio.run()
   - Eliminados from_env() y from_settings() (el sandbox construye explicitamente)
   - load_embedding_model acepta solo parametros explicitos (sin fallback)
 """
 
 import asyncio
+import copy
 import logging
 import time
 from dataclasses import dataclass, field
@@ -82,6 +83,20 @@ class LLMMetrics:
             f"Retries: {self.retries_total}"
         )
 
+    # FIX DTm-11: crear Lock nuevo en copias para evitar compartir
+    # estado de sincronizacion entre instancias independientes.
+    def __copy__(self) -> "LLMMetrics":
+        return LLMMetrics(
+            total_requests=self.total_requests,
+            successful_requests=self.successful_requests,
+            failed_requests=self.failed_requests,
+            total_latency_ms=self.total_latency_ms,
+            retries_total=self.retries_total,
+        )
+
+    def __deepcopy__(self, memo: dict) -> "LLMMetrics":
+        return self.__copy__()
+
 
 # =============================================================================
 # HELPER: ejecutar coroutine de forma segura
@@ -92,16 +107,32 @@ from typing import Any, Coroutine, TypeVar
 _T = TypeVar("_T")
 
 
-def _run_async(coro: Coroutine[Any, Any, _T]) -> _T:
+def run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
     """
-    Ejecuta una coroutine de forma sincrona via asyncio.run().
+    Ejecuta una coroutine de forma sincrona.
 
-    El pipeline se ejecuta siempre desde CLI (run.py), donde no hay event loop
-    preexistente. Si se necesita ejecutar desde un contexto con event loop activo
-    (Jupyter, frameworks async), usar la API async directamente (invoke_async,
-    _batch_generate_and_evaluate, generate_contexts_batch).
+    - Sin event loop activo (CLI normal): usa asyncio.run().
+    - Con event loop activo (Jupyter, frameworks async): crea un thread
+      dedicado con su propio loop para evitar el error
+      "cannot be called from a running event loop".
+
+    FIX DTm-3: detecta loop activo y ejecuta en thread auxiliar.
     """
-    return asyncio.run(coro)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None:
+        # Caso normal (CLI): no hay loop, asyncio.run() funciona directamente.
+        return asyncio.run(coro)
+
+    # Caso con loop activo (Jupyter, frameworks async):
+    # ejecutar la coroutine en un thread dedicado con su propio loop.
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, coro)
+        return future.result()
 
 
 # =============================================================================
@@ -189,6 +220,8 @@ class AsyncLLMService:
                         else str(part)
                         for part in content
                     )
+                if not content:
+                    raise ValueError("LLM returned empty/null content")
                 return str(content)
 
             except Exception as e:
@@ -232,8 +265,8 @@ class AsyncLLMService:
         system_prompt: Optional[str] = None,
         max_tokens: int = 4096,
     ) -> str:
-        """Wrapper sincrono. Usa _run_async para compatibilidad con loops activos."""
-        return _run_async(
+        """Wrapper sincrono. Usa run_sync para compatibilidad con loops activos."""
+        return run_sync(
             self.invoke_async(user_prompt, system_prompt, max_tokens)
         )
 
@@ -312,7 +345,7 @@ __all__ = [
     "AsyncLLMService",
     "LLMMetrics",
     "HAS_NVIDIA",
-    "_run_async",
+    "run_sync",
     "load_embedding_model",
     "HAS_NVIDIA_EMBEDDINGS",
 ]

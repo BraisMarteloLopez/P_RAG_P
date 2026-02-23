@@ -11,20 +11,7 @@ Cobertura:
 
 Sin dependencias externas.
 """
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-for mod in [
-    "boto3", "botocore", "botocore.exceptions",
-    "langchain_nvidia_ai_endpoints", "langchain_core",
-    "langchain_core.messages", "langchain_core.documents",
-    "langchain_core.embeddings", "langchain_chroma", "chromadb",
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
 
 from sandbox_mteb.evaluator import MTEBEvaluator
 from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig

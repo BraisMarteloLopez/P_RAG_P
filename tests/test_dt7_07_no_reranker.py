@@ -1,24 +1,9 @@
 """
-Test DT-7 #7: Sin reranker configurado -> reranked_status=None,
-rerank_failures=None en config_snapshot.
+Test DT-7: Sin reranker → reranked_status=None, rerank_failures=None.
 """
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-for mod in [
-    "boto3", "botocore", "botocore.exceptions",
-    "langchain_nvidia_ai_endpoints", "langchain_core",
-    "langchain_core.messages", "langchain_core.documents",
-    "langchain_core.embeddings", "langchain_chroma", "chromadb",
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
-
 from shared.retrieval.core import RetrievalResult, RetrievalStrategy, RetrievalConfig
 from shared.config_base import InfraConfig, RerankerConfig
+from shared.types import LoadedDataset, NormalizedDocument
 
 
 class MockRetriever:
@@ -36,6 +21,7 @@ class MockRetriever:
 
 
 def test_no_reranker():
+    """Sin reranker: reranked_status=None, generation_doc_ids vacio, config_snapshot rerank_failures=None."""
     from sandbox_mteb.evaluator import MTEBEvaluator
     from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
 
@@ -47,56 +33,13 @@ def test_no_reranker():
     )
     evaluator = MTEBEvaluator(config)
     evaluator._retriever = MockRetriever()
-    # _reranker queda None (no configurado)
 
-    detail, reranked_status = evaluator._execute_retrieval(
-        "test query", ["doc_0", "doc_1"]
-    )
+    detail, reranked_status = evaluator._execute_retrieval("test query", ["doc_0"])
 
-    assert reranked_status is None, (
-        f"Esperado None sin reranker, obtenido {reranked_status}"
-    )
-    assert evaluator._rerank_failures == 0
-    assert len(detail.generation_doc_ids) == 0, (
-        "Sin reranker, generation_doc_ids debe estar vacio"
-    )
-    print("PASS: sin reranker -> reranked_status=None, generation_doc_ids vacio")
+    assert reranked_status is None
+    assert len(detail.generation_doc_ids) == 0
 
-
-def test_no_reranker_config_snapshot():
-    """Verifica que rerank_failures es None en config_snapshot cuando reranker disabled."""
-    from sandbox_mteb.evaluator import MTEBEvaluator
-    from sandbox_mteb.config import MTEBConfig, MinIOStorageConfig
-    from shared.types import (
-        LoadedDataset, NormalizedQuery, NormalizedDocument,
-        QueryEvaluationResult, EvaluationStatus, DatasetType, MetricType,
-    )
-
-    config = MTEBConfig(
-        infra=InfraConfig(),
-        storage=MinIOStorageConfig(),
-        retrieval=RetrievalConfig(retrieval_k=20),
-        reranker=RerankerConfig(enabled=False),
-    )
-    evaluator = MTEBEvaluator(config)
-
-    # Dataset minimo para _build_run
+    # config_snapshot tambien refleja None
     dataset = LoadedDataset(name="test", corpus={"doc_0": NormalizedDocument("doc_0", "c")})
-
-    run = evaluator._build_run(
-        run_id="test_run",
-        dataset=dataset,
-        query_results=[],
-        elapsed_seconds=1.0,
-        indexed_corpus_size=1,
-    )
-
-    assert run.config_snapshot["rerank_failures"] is None, (
-        f"Esperado None, obtenido {run.config_snapshot['rerank_failures']}"
-    )
-    print("PASS: config_snapshot rerank_failures=None cuando reranker disabled")
-
-
-if __name__ == "__main__":
-    test_no_reranker()
-    test_no_reranker_config_snapshot()
+    run = evaluator._build_run("test_run", dataset, [], 1.0, 1)
+    assert run.config_snapshot["rerank_failures"] is None

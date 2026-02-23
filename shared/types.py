@@ -125,7 +125,16 @@ class NormalizedDocument:
         }
 
     def get_full_text(self) -> str:
-        """Retorna titulo + contenido concatenados."""
+        """Retorna titulo + contenido concatenados para indexacion.
+
+        Formato: "{titulo}\\n\\n{contenido}" si hay titulo, solo contenido si no.
+
+        Nota: el titulo se antepone al contenido, lo que sesga el embedding
+        hacia los terminos del titulo. Para titulos largos o genericos
+        (ej: "Wikipedia"), el embedding representara mas el titulo que el
+        contenido sustantivo. Esta es una decision de diseno aceptada para
+        el caso de uso actual (Wikipedia con titulos cortos y descriptivos).
+        """
         if self.title:
             return f"{self.title}\n\n{self.content}"
         return self.content
@@ -257,12 +266,19 @@ class QueryRetrievalDetail:
     # que posiciones originales fueron promovidas por el reranker.
     pre_rerank_candidate_ids: List[str] = field(default_factory=list)
 
+    # Metricas de retrieval efectivo (post-rerank). Solo cuando reranker activo.
+    # Miden la calidad de los docs que realmente llegan al LLM de generacion.
+    generation_recall: float = 0.0
+    generation_hit: float = 0.0
+
     # Constante de clase, no se instancia ni serializa por query
     EVAL_K_VALUES: ClassVar[List[int]] = [1, 3, 5, 10, 20]
 
     def __post_init__(self) -> None:
         if self.expected_doc_ids and self.retrieved_doc_ids:
             self._calculate_all_metrics()
+        if self.expected_doc_ids and self.generation_doc_ids:
+            self._calculate_generation_metrics()
 
     def get_generation_contents(self) -> List[str]:
         """Contenidos para generacion: post-rerank si disponible, pre-rerank si no."""
@@ -302,6 +318,18 @@ class QueryRetrievalDetail:
             if doc_id in expected_set:
                 self.mrr = 1.0 / rank
                 break
+
+    def _calculate_generation_metrics(self) -> None:
+        """Metricas sobre generation_doc_ids (post-rerank)."""
+        expected_set = set(self.expected_doc_ids)
+        gen_set = set(self.generation_doc_ids)
+        n_relevant = len(expected_set)
+        self.generation_hit = 1.0 if gen_set & expected_set else 0.0
+        self.generation_recall = (
+            len(gen_set & expected_set) / n_relevant
+            if n_relevant > 0
+            else 0.0
+        )
 
 
 @dataclass
@@ -359,6 +387,8 @@ class QueryEvaluationResult:
         # Solo incluir generation_doc_ids si hay reranking (evita ruido en JSON)
         if self.retrieval.generation_doc_ids:
             result["generation_doc_ids"] = self.retrieval.generation_doc_ids
+            result["generation_recall"] = round(self.retrieval.generation_recall, 4)
+            result["generation_hit"] = round(self.retrieval.generation_hit, 4)
         # FIX DT-5: incluir candidatos pre-rerank para trazabilidad
         if self.retrieval.pre_rerank_candidate_ids:
             result["pre_rerank_candidate_ids"] = self.retrieval.pre_rerank_candidate_ids
@@ -398,7 +428,7 @@ class EvaluationRun:
     avg_mrr: float = 0.0
     avg_recall_at_k: Dict[int, float] = field(default_factory=dict)
     avg_ndcg_at_k: Dict[int, float] = field(default_factory=dict)
-    retrieval_failure_rate_at_k: Dict[int, float] = field(
+    retrieval_complement_recall_at_k: Dict[int, float] = field(
         default_factory=dict
     )
 
@@ -409,6 +439,11 @@ class EvaluationRun:
     # Diagnostico
     avg_retrieved_count: float = 0.0
     avg_expected_count: float = 0.0
+
+    # Metricas de retrieval efectivo (post-rerank, solo con reranker activo)
+    avg_generation_recall: Optional[float] = None
+    avg_generation_hit: Optional[float] = None
+    reranker_rescue_count: int = 0
 
     # Detalle por query
     query_results: List[QueryEvaluationResult] = field(default_factory=list)
@@ -447,12 +482,23 @@ class EvaluationRun:
             "avg_ndcg_at_k": {
                 k: round(v, 4) for k, v in self.avg_ndcg_at_k.items()
             },
-            "retrieval_failure_rate_at_k": {
+            "retrieval_complement_recall_at_k": {
                 k: round(v, 4)
-                for k, v in self.retrieval_failure_rate_at_k.items()
+                for k, v in self.retrieval_complement_recall_at_k.items()
             },
             "avg_retrieved_count": round(self.avg_retrieved_count, 1),
             "avg_expected_count": round(self.avg_expected_count, 1),
+            "avg_generation_recall": (
+                round(self.avg_generation_recall, 4)
+                if self.avg_generation_recall is not None
+                else None
+            ),
+            "avg_generation_hit": (
+                round(self.avg_generation_hit, 4)
+                if self.avg_generation_hit is not None
+                else None
+            ),
+            "reranker_rescue_count": self.reranker_rescue_count,
             "avg_generation_score": (
                 round(self.avg_generation_score, 4)
                 if self.avg_generation_score is not None

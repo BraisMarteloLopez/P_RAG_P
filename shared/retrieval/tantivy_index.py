@@ -32,7 +32,7 @@ try:
     HAS_TANTIVY = True
 except ImportError:
     HAS_TANTIVY = False
-    tantivy = None  # type: ignore
+    tantivy = None
 
 
 # Mapeo de codigos de idioma a nombres de stemmer Tantivy
@@ -227,7 +227,7 @@ class TantivyIndex:
     def size(self) -> int:
         return self._doc_count
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Limpia tmpdir si es propio."""
         if self._owns_dir and self._index_dir.exists():
             try:

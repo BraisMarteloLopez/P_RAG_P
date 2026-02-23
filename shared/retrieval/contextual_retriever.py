@@ -393,9 +393,9 @@ class ContextualRetriever(BaseRetriever):
         self, documents: List[Dict[str, Any]]
     ) -> List[EnrichedChunk]:
         """Ejecuta generacion batch de forma sincrona."""
-        from shared.llm import _run_async
+        from shared.llm import run_sync
         batch_size = self.config.context_batch_size
-        return _run_async(
+        return run_sync(
             self.context_generator.generate_contexts_batch(
                 documents, batch_size=batch_size
             )
