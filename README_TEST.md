@@ -1,6 +1,6 @@
 # Tests — RAG_P
 
-123 unit tests + tests de integracion. Ejecutables con Python 3.10+.
+147 unit tests + 15 tests de integracion (162 total). Ejecutables con Python 3.10+.
 
 ```bash
 pytest tests/                      # Todo junto (unit + integracion)
@@ -24,6 +24,9 @@ pytest tests/test_dtm4_rrf.py     # Archivo especifico
 | Archivo | Que testea | Tests |
 |---|---|---|
 | `test_dt5_pre_rerank_traceability.py` | `_execute_retrieval()` con/sin reranker: `pre_rerank_candidate_ids` poblado/vacio, doc promovido trazable a posicion original | 3 |
+| `test_dt6_01_faithfulness_sync.py` | Faithfulness sync: contexto largo pasa integro al judge | 1 |
+| `test_dt6_02_faithfulness_async.py` | Faithfulness async: contexto largo pasa integro al judge | 1 |
+| `test_dt6_03_context_utilization.py` | Context utilization sync/async: contexto largo integro, vacio retorna 0.0 | 3 |
 | `test_dt6_context_truncation.py` | DT-6: faithfulness y context_utilization (sync/async) pasan contexto >4000 chars integro al judge. Contexto vacio retorna 0.0 sin invocar judge. | 5 |
 | `test_dt7_05_06_rerank_status.py` | Rerank exitoso: `reranked_ok=True`, contador=0. Rerank fallido: `reranked_ok=False`, contador incrementa. | 2 |
 | `test_dt7_07_no_reranker.py` | Sin reranker: `reranked_status=None`, `generation_doc_ids` vacio, `rerank_failures=None` en config_snapshot. | 1 |
@@ -34,8 +37,9 @@ pytest tests/test_dtm4_rrf.py     # Archivo especifico
 | `test_dtm4_loader_populate.py` | `_populate_from_dataframes()`: queries/corpus/qrels, multiples qrels, DataFrames None/vacios, answer_type inferido, metadata question_type. | 9 |
 | `test_dtm4_rrf.py` | `reciprocal_rank_fusion()`: rankings vacios, orden, doc en ambos/un ranking, pesos, top_n, formula RRF, 3 rankings, parametro k. | 11 |
 | `test_dtm4_subset_selection.py` | `_select_subset_dev()`: gold docs en corpus, distractores, seed determinista, error si gold > corpus, gold ausente. | 9 |
-| `test_dtm4_tantivy_edge_cases.py` | `TantivyIndex` via `@patch`: sanitizacion regex, guards (query vacia/whitespace/None), clear, build vacio, constructor language. | 13 |
+| `test_dtm4_tantivy_edge_cases.py` | `TantivyIndex` via `@patch`: sanitizacion regex, guards (query vacia/whitespace/None), clear, build vacio, constructor language. | 17 |
 | `test_dtm5_12_13_secondary_metric_errors.py` | Metricas secundarias fallidas: `MetricResult(value=0.0, error=...)` + warning. Todas fallan: todas con error. | 3 |
+| `test_dtm17_generation_retrieval_metrics.py` | Metricas de retrieval efectivo (post-rerank): `generation_recall`, `generation_hit`, `reranker_rescue_count`, agregacion en `_build_run()`. | 15 |
 | `test_format_context.py` | `_format_context()`: placeholder vacio, headers [Doc N], separador, truncacion, boundary exacto. | 9 |
 | `test_metrics_reference_based.py` | TextNormalizer (accents, dashes, articles) + F1 (boundaries, overlap, duplicados, normalizacion) + EM (boundaries, normalizacion, sin normalize) + Accuracy (basic, extra text, valid_labels). | 15 |
 
@@ -48,14 +52,15 @@ pytest tests/test_dtm4_rrf.py     # Archivo especifico
 | Metodo | Tipo | Tests | Valor |
 |---|---|---|---|
 | `_build_run()` + `to_dict()` | Agregacion + serializacion | 18 | Paso final del pipeline. Errores corrompen JSON. |
+| generation/retrieval metrics | Agregacion post-rerank | 15 | `generation_recall`, `generation_hit`, `reranker_rescue_count`. |
 | `_select_subset_dev()` | Logica Python pura | 9 | Invariantes: gold docs en corpus, seed determinista. |
 | `reciprocal_rank_fusion()` | Formula matematica | 11 | `score = weight / (k + rank)`. Verificable. |
 | `_populate_from_dataframes()` | Parsing via MockDataFrame | 9 | Interfaz: solo `iterrows()` + `get()`. pandas no necesario. |
-| `TantivyIndex` guards | `@patch` HAS_TANTIVY | 13 | Guards retornan antes de tocar Rust. |
+| `TantivyIndex` guards | `@patch` HAS_TANTIVY | 17 | Guards retornan antes de tocar Rust. |
 | `_extract_score_fallback()` | Regex pura | 21 | 3 patrones: decimales, escala 1-10, fracciones. |
 | `_format_context()` | String formatting | 9 | Truncacion por max_chars. |
 | TextNormalizer + metricas | Computacion pura | 15 | F1, EM, Accuracy con normalizacion. |
-| faithfulness/context_util | Mock judge | 5 | No trunca contexto >4000 chars. |
+| faithfulness/context_util | Mock judge | 10 | No trunca contexto >4000 chars. |
 | Reranker sort + status | Mock retriever/reranker | 7 | Sort descendente, fallback detectado. |
 
 ### No testeable sin infraestructura (documentado)

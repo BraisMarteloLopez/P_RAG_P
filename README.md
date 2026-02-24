@@ -29,9 +29,9 @@ RAG_P/
 │   ├── run.py                       # Entry point (--dry-run, -v)
 │   └── env.example                  # Plantilla .env
 │
-├── tests/                           # 123 unit + integration tests (pytest)
+├── tests/                           # 147 unit + 15 integration tests (pytest)
 │   ├── conftest.py                  # Mocks condicionales (solo si paquete no instalado)
-│   ├── test_*.py                    # 14 archivos — ver README_TEST.md
+│   ├── test_*.py                    # 19 archivos — ver README_TEST.md
 │   └── integration/                 # Tests contra NIM + MinIO reales
 │       ├── conftest.py              # Carga .env real, fixtures de sesion
 │       └── test_*.py                # Requieren infraestructura accesible
@@ -199,7 +199,7 @@ Tres archivos por run en `data/results/`:
 
 ## Tests
 
-138 unit tests + tests de integracion. Ejecutables con Python 3.10+.
+147 unit tests + 15 tests de integracion (162 total). Ejecutables con Python 3.10+.
 
 ```bash
 pytest tests/                      # Todo junto (unit + integracion)
@@ -228,7 +228,7 @@ Detalle de cobertura por archivo, decisiones de mocking y diseno de tests de int
 | DTm-1 | `_populate_from_dataframes()` extraido en `loader.py`. ~50 lineas duplicadas eliminadas. |
 | DTm-2 | `vector_store.py` usa API publica ChromaDB nativo en vez de `_store._collection` (API interna LangChain). |
 | DTm-3 | `run_sync()` compatible con event loops activos (Jupyter) via `ThreadPoolExecutor`. |
-| DTm-4 | 138 tests unitarios. pytest nativo, `conftest.py` centralizado, `pyproject.toml` configurado. |
+| DTm-4 | 162 tests (147 unit + 15 integracion). pytest nativo, `conftest.py` centralizado, `pyproject.toml` configurado. |
 | DTm-5 | Metricas secundarias fallidas: `MetricResult(value=0.0, error=...)` + warning (no desaparecen del JSON). |
 | DTm-6 | Retry con backoff exponencial en `_batch_embed_queries()`. |
 | DTm-7 | `_run_async` renombrado a `run_sync`. |
