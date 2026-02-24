@@ -102,6 +102,21 @@ class RunExporter:
         row["avg_retrieved_count"] = round(run.avg_retrieved_count, 1)
         row["avg_expected_count"] = round(run.avg_expected_count, 1)
 
+        # Post-rerank retrieval metrics (solo con reranker)
+        row["gen_recall"] = (
+            round(run.avg_generation_recall, 4)
+            if run.avg_generation_recall is not None
+            else ""
+        )
+        row["gen_hit"] = (
+            round(run.avg_generation_hit, 4)
+            if run.avg_generation_hit is not None
+            else ""
+        )
+        row["reranker_rescue_count"] = (
+            run.reranker_rescue_count if run.avg_generation_recall is not None else ""
+        )
+
         # Config snapshot fields
         snapshot = run.config_snapshot or {}
         row["retrieval_k"] = snapshot.get("retrieval_k", "")
@@ -140,10 +155,15 @@ class RunExporter:
         k_values = sorted(first.retrieval.hit_at_k.keys())
 
         # Collect all secondary metric keys across all queries
-        all_secondary_keys = set()
+        all_secondary_keys: set[str] = set()
         for qr in run.query_results:
             all_secondary_keys.update(qr.secondary_metrics.keys())
         sorted_secondary_keys = sorted(all_secondary_keys)
+
+        # Detect if reranker was active (any query has generation_doc_ids)
+        has_reranker = any(
+            qr.retrieval.generation_doc_ids for qr in run.query_results
+        )
 
         fieldnames = [
             "query_id",
@@ -162,6 +182,10 @@ class RunExporter:
             "n_retrieved",
             "n_generation_docs",
             "reranked",
+        ])
+        if has_reranker:
+            fieldnames.extend(["gen_recall", "gen_hit"])
+        fieldnames.extend([
             "n_expected",
             "primary_metric_type",
             "primary_metric_value",
@@ -207,6 +231,9 @@ class RunExporter:
                 # FIX DT-7: exponer estado de rerank per-query para diagnostico
                 reranked_val = qr.metadata.get("reranked") if qr.metadata else None
                 row["reranked"] = "" if reranked_val is None else reranked_val
+                if has_reranker:
+                    row["gen_recall"] = round(qr.retrieval.generation_recall, 4)
+                    row["gen_hit"] = round(qr.retrieval.generation_hit, 4)
                 row["n_expected"] = len(qr.retrieval.expected_doc_ids)
                 row["primary_metric_type"] = qr.primary_metric_type.value
                 row["primary_metric_value"] = round(

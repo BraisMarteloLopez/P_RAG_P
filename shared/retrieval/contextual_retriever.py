@@ -51,40 +51,39 @@ class EnrichedChunk:
 
 
 # =============================================================================
-# PROMPTS — Anthropic Contextual Retrieval
+# PROMPTS — Optimizados para modelos pequeños (nemotron-3-nano ~1B params)
 # =============================================================================
-# Referencia: platform.claude.com/cookbook/capabilities-contextual-embeddings-guide
+# Los modelos nano no manejan bien XML complejo ni instrucciones abstractas.
+# Se usan headers en texto plano (Document: / Chunk:) e instrucciones directas.
 #
 # Modo A (con documento padre):
-#   El LLM recibe el documento completo y el chunk específico.
-#   Genera una descripción breve que sitúa el chunk dentro del documento.
+#   El LLM recibe el documento padre (truncado) y el chunk específico.
+#   Genera 1-2 frases que sitúan el chunk dentro del documento.
 #
 # Modo B (sin documento padre — fallback):
 #   Solo se dispone del chunk y opcionalmente un título.
 #   El LLM genera un contexto basado en el contenido del chunk.
 # =============================================================================
 
-DOCUMENT_CONTEXT_PROMPT = """<document>
+CONTEXT_SYSTEM_PROMPT = (
+    "You are a helpful assistant. You always reply with a short sentence. "
+    "Never reply with an empty message."
+)
+
+DOCUMENT_CONTEXT_PROMPT = """Document:
 {doc_content}
-</document>"""
 
-CHUNK_CONTEXT_PROMPT = """Here is the chunk we want to situate within the whole document
-<chunk>
+Chunk:
 {chunk_content}
-</chunk>
 
-Please give a short succinct context to situate this chunk within the overall document \
-for the purposes of improving search retrieval of the chunk.
-Answer only with the succinct context and nothing else."""
+Write 1-2 sentences describing what this chunk is about and how it fits in the document. Be specific, mention names and topics."""
 
-FALLBACK_CONTEXT_PROMPT = """The following text chunk belongs to a document titled "{title}".
-<chunk>
+FALLBACK_CONTEXT_PROMPT = """Document title: {title}
+
+Chunk:
 {chunk_content}
-</chunk>
 
-Please give a short succinct context to situate this chunk \
-for the purposes of improving search retrieval of the chunk.
-Answer only with the succinct context and nothing else."""
+Write 1-2 sentences describing what this chunk is about. Be specific, mention names and topics."""
 
 
 # =============================================================================
@@ -126,8 +125,9 @@ class LLMContextGenerator:
         """
         Genera contexto para un chunk de forma asíncrona.
 
-        Si parent_content está disponible, usa el prompt Anthropic completo
-        (documento padre + chunk). Si no, usa el fallback (solo chunk + título).
+        Si parent_content está disponible, usa el prompt con documento padre
+        (truncado a 2000 chars). Si no, usa el fallback (solo chunk + título).
+        Los inputs se truncan para respetar el context window de modelos nano.
         """
         cache_key = self._make_cache_key(
             chunk_content, parent_content or document_title or ""
@@ -137,28 +137,37 @@ class LLMContextGenerator:
             self._total_cache_hits += 1
             return self._cache[cache_key]
 
+        # Truncar inputs para modelos con context window limitado
+        truncated_chunk = chunk_content[:1000]
+
         if parent_content:
-            # Modo A: prompt Anthropic con documento padre
-            user_prompt = (
-                DOCUMENT_CONTEXT_PROMPT.format(doc_content=parent_content)
-                + "\n"
-                + CHUNK_CONTEXT_PROMPT.format(chunk_content=chunk_content)
+            # Modo A: prompt con documento padre (truncado)
+            truncated_parent = parent_content[:2000]
+            user_prompt = DOCUMENT_CONTEXT_PROMPT.format(
+                doc_content=truncated_parent,
+                chunk_content=truncated_chunk,
             )
             self._total_with_parent += 1
         else:
             # Modo B: fallback sin documento padre
             title = document_title or "Untitled"
             user_prompt = FALLBACK_CONTEXT_PROMPT.format(
-                title=title, chunk_content=chunk_content
+                title=title, chunk_content=truncated_chunk
             )
             self._total_fallback += 1
 
         try:
             response = await self.llm_service.invoke_async(
                 user_prompt,
+                system_prompt=CONTEXT_SYSTEM_PROMPT,
                 max_tokens=self.max_tokens,
             )
             context = str(response).strip()
+
+            # Validación post-strip: captura respuestas de solo espacios/newlines
+            if not context:
+                raise ValueError("LLM returned empty context after strip")
+
             self._cache[cache_key] = context
             self._total_generated += 1
             return context
@@ -166,7 +175,9 @@ class LLMContextGenerator:
         except Exception as e:
             logger.warning(f"Error generando contexto: {e}. Usando fallback.")
             self._total_errors += 1
-            fallback = f"Document: {document_title or 'Untitled'}."
+            # Fallback mejorado: incluye keywords reales del chunk para retrieval
+            chunk_preview = chunk_content[:200].replace("\n", " ")
+            fallback = f"Document: {document_title or 'Untitled'}. Content: {chunk_preview}"
             self._cache[cache_key] = fallback
             return fallback
 
@@ -393,9 +404,9 @@ class ContextualRetriever(BaseRetriever):
         self, documents: List[Dict[str, Any]]
     ) -> List[EnrichedChunk]:
         """Ejecuta generacion batch de forma sincrona."""
-        from shared.llm import _run_async
+        from shared.llm import run_sync
         batch_size = self.config.context_batch_size
-        return _run_async(
+        return run_sync(
             self.context_generator.generate_contexts_batch(
                 documents, batch_size=batch_size
             )

@@ -147,15 +147,13 @@ class ChromaVectorStore:
         """
         Busqueda por vector pre-computado. Evita llamada al embedding model.
 
-        FRAGILIDAD: accede a self._store._collection (API interna de LangChain Chroma).
-        LangChain Chroma no expone busqueda por vector con scores en su API publica.
-        Puede romperse en actualizaciones de langchain-chroma sin aviso.
-        Alternativa futura: usar chromadb client nativo directamente (bypass LangChain).
+        FIX DTm-2: usa self._client.get_collection() (API publica de chromadb)
+        en lugar de self._store._collection (API interna de LangChain Chroma).
         """
         try:
             from langchain_core.documents import Document
 
-            collection = self._store._collection
+            collection = self._client.get_collection(self.collection_name)
             results = collection.query(
                 query_embeddings=[vector],
                 n_results=k,

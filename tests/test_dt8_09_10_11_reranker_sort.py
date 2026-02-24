@@ -3,19 +3,7 @@ Test DT-8 #9:  Docs en orden ascendente -> sort los reordena descendente.
 Test DT-8 #10: Docs con scores identicos -> no falla.
 Test DT-8 #11: Doc sin relevance_score -> default 0.0, queda al final.
 """
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-for mod in [
-    "langchain_nvidia_ai_endpoints", "langchain_core",
-    "langchain_core.messages", "langchain_core.documents",
-    "langchain_core.embeddings", "langchain_chroma", "chromadb",
-]:
-    if mod not in sys.modules:
-        sys.modules[mod] = MagicMock()
 
 from shared.retrieval.core import RetrievalResult, RetrievalStrategy
 from shared.retrieval.reranker import CrossEncoderReranker

@@ -34,11 +34,12 @@ from shared.types import (
     EmbeddingModelProtocol,
     get_dataset_config,
 )
-from shared.llm import AsyncLLMService, load_embedding_model, _run_async
+from shared.llm import AsyncLLMService, load_embedding_model, run_sync
 from shared.metrics import MetricsCalculator, MetricResult
 from shared.retrieval import get_retriever, RetrievalStrategy
 from shared.retrieval.core import BaseRetriever
 from shared.retrieval.reranker import CrossEncoderReranker, HAS_NVIDIA_RERANK
+from shared.structured_logging import structured_log
 
 from .config import MTEBConfig, GENERATION_PROMPTS
 from .loader import MinIOLoader
@@ -201,6 +202,16 @@ class MTEBEvaluator:
             logger.info(f"  Corpus:     {self.config.max_corpus if self.config.max_corpus > 0 else 'ALL'}")
         logger.info("=" * 60)
 
+        # DT-3: evento estructurado de inicio de run
+        structured_log(
+            "run_start",
+            run_id=run_id,
+            dataset=self.config.dataset_name,
+            embedding=self.config.infra.embedding_model_name,
+            strategy=self.config.retrieval.strategy.name,
+            dev_mode=self.config.dev_mode,
+        )
+
         try:
             # 1. Inicializar componentes
             self._init_components()
@@ -250,7 +261,7 @@ class MTEBEvaluator:
             )
 
             # 4. Indexar documentos
-            self._index_documents(dataset.name, corpus)
+            self._index_documents(dataset.name, corpus, run_id)
 
             # 5. Evaluar queries (pipeline async)
             ds_config = get_dataset_config(dataset.name)
@@ -274,10 +285,27 @@ class MTEBEvaluator:
                 f"MRR={evaluation_run.avg_mrr:.4f}"
             )
 
+            # DT-3: evento estructurado de fin de run
+            structured_log(
+                "run_complete",
+                run_id=run_id,
+                elapsed_s=round(elapsed, 2),
+                queries_evaluated=evaluation_run.num_queries_evaluated,
+                queries_failed=evaluation_run.num_queries_failed,
+                hit_at_5=round(evaluation_run.avg_hit_rate_at_5, 4),
+                mrr=round(evaluation_run.avg_mrr, 4),
+                avg_generation_score=(
+                    round(evaluation_run.avg_generation_score, 4)
+                    if evaluation_run.avg_generation_score is not None
+                    else None
+                ),
+            )
+
             return evaluation_run
 
         except Exception as e:
             logger.error(f"RUN FALLIDO: {e}")
+            structured_log("run_failed", run_id=run_id, error=str(e))
             raise
         finally:
             self._cleanup()
@@ -436,10 +464,14 @@ class MTEBEvaluator:
     # -----------------------------------------------------------------
 
     def _index_documents(
-        self, dataset_name: str, corpus: Dict[str, Any]
+        self, dataset_name: str, corpus: Dict[str, Any],
+        run_id: str = "",
     ) -> None:
         """Crea retriever e indexa el corpus."""
-        collection_name = f"eval_{dataset_name}_{uuid.uuid4().hex[:8]}"
+        # FIX DTm-10: usar run_id (unico y determinista) en lugar de uuid
+        # corto (8 hex = 32 bits) para eliminar riesgo de colision en
+        # ejecuciones paralelas.
+        collection_name = f"eval_{run_id}" if run_id else f"eval_{dataset_name}_{uuid.uuid4().hex[:8]}"
 
         self._retriever = get_retriever(
             config=self.config.retrieval,
@@ -513,26 +545,40 @@ class MTEBEvaluator:
             if model_type == "asymmetric":
                 payload["input_type"] = "query"
 
-            try:
-                body = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(
-                    url, data=body, method="POST",
-                    headers={"Content-Type": "application/json"},
-                )
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
+            # FIX DTm-6: retry por batch antes de abandonar todo el pre-embed.
+            max_retries = 2
+            for attempt in range(max_retries + 1):
+                try:
+                    body = json.dumps(payload).encode("utf-8")
+                    req = urllib.request.Request(
+                        url, data=body, method="POST",
+                        headers={"Content-Type": "application/json"},
+                    )
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
 
-                # Ordenar por index (la API puede devolver desordenado)
-                items = sorted(data["data"], key=lambda x: x["index"])
-                for item in items:
-                    all_vectors.append(item["embedding"])
+                    # Ordenar por index (la API puede devolver desordenado)
+                    items = sorted(data["data"], key=lambda x: x["index"])
+                    for item in items:
+                        all_vectors.append(item["embedding"])
+                    break  # batch OK
 
-            except Exception as e:
-                logger.warning(
-                    f"  Error en batch embed (offset={batch_start}): {e}. "
-                    "Fallback a retrieval sin pre-embed."
-                )
-                return []
+                except Exception as e:
+                    if attempt < max_retries:
+                        wait = 2 ** attempt
+                        logger.warning(
+                            f"  Batch embed retry {attempt + 1}/{max_retries} "
+                            f"(offset={batch_start}): {e}. "
+                            f"Reintentando en {wait}s..."
+                        )
+                        time.sleep(wait)
+                    else:
+                        logger.warning(
+                            f"  Error en batch embed (offset={batch_start}) "
+                            f"tras {max_retries + 1} intentos: {e}. "
+                            "Fallback a retrieval sin pre-embed."
+                        )
+                        return []
 
             batch_end = batch_start + len(batch)
             if batch_end % 500 == 0 or batch_end == n:
@@ -615,7 +661,7 @@ class MTEBEvaluator:
                 f"({n} queries, async)..."
             )
             t1 = time.time()
-            raw = _run_async(
+            raw = run_sync(
                 self._batch_generate_and_evaluate(
                     queries, retrievals, ds_config, dataset_name
                 )
@@ -1052,7 +1098,7 @@ class MTEBEvaluator:
             avg_mrr /= nc
             avg_recall = {k: v / nc for k, v in recall_sums.items()}
             avg_ndcg = {k: v / nc for k, v in ndcg_sums.items()}
-            failure_rate = {k: 1.0 - v for k, v in avg_recall.items()}
+            complement_recall = {k: 1.0 - v for k, v in avg_recall.items()}
             avg_retrieved = sum(
                 len(qr.retrieval.retrieved_doc_ids) for qr in completed
             ) / nc
@@ -1062,9 +1108,31 @@ class MTEBEvaluator:
         else:
             avg_recall = {}
             avg_ndcg = {}
-            failure_rate = {}
+            complement_recall = {}
             avg_retrieved = 0.0
             avg_expected = 0.0
+
+        # Metricas de retrieval efectivo (post-rerank)
+        avg_gen_recall: Optional[float] = None
+        avg_gen_hit: Optional[float] = None
+        rescue_count = 0
+        if completed:
+            with_gen = [
+                qr for qr in completed if qr.retrieval.generation_doc_ids
+            ]
+            if with_gen:
+                retrieval_k = self.config.retrieval.retrieval_k
+                avg_gen_recall = sum(
+                    qr.retrieval.generation_recall for qr in with_gen
+                ) / len(with_gen)
+                avg_gen_hit = sum(
+                    qr.retrieval.generation_hit for qr in with_gen
+                ) / len(with_gen)
+                rescue_count = sum(
+                    1 for qr in with_gen
+                    if qr.retrieval.recall_at_k.get(retrieval_k, 0.0) == 0.0
+                    and qr.retrieval.generation_recall > 0.0
+                )
 
         # Generacion promedio - INCLUYE ZEROS (fix DT-002)
         avg_gen = None
@@ -1120,9 +1188,12 @@ class MTEBEvaluator:
             avg_mrr=avg_mrr,
             avg_recall_at_k=avg_recall,
             avg_ndcg_at_k=avg_ndcg,
-            retrieval_failure_rate_at_k=failure_rate,
+            retrieval_complement_recall_at_k=complement_recall,
             avg_retrieved_count=avg_retrieved,
             avg_expected_count=avg_expected,
+            avg_generation_recall=avg_gen_recall,
+            avg_generation_hit=avg_gen_hit,
+            reranker_rescue_count=rescue_count,
             avg_generation_score=avg_gen,
             execution_time_seconds=elapsed_seconds,
             query_results=query_results,

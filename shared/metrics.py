@@ -41,6 +41,12 @@ except ImportError:
 # Interfaces locales
 from shared.types import MetricType, LLMJudgeProtocol, EmbeddingModelProtocol
 
+# Limite de caracteres de la respuesta generada que se envia al LLM Judge.
+# Guarda defensiva contra respuestas degeneradas (repeticiones, text overflow).
+# Para HotpotQA las respuestas reales rara vez superan 200 chars, asi que
+# 2000 chars (~500 tokens) es holgado sin desperdiciar contexto del judge.
+_MAX_RESPONSE_CHARS_FOR_JUDGE = 2000
+
 # Configuracion del logger
 logger = logging.getLogger(__name__)
 
@@ -57,11 +63,11 @@ class MetricResult:
     """Resultado de una evaluacion de metrica. Valor en [0.0, 1.0]."""
     metric_type: MetricType
     value: float
-    details: Dict[str, Any] = None
+    details: Optional[Dict[str, Any]] = None
     confidence: Optional[float] = None
     error: Optional[str] = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.details is None:
             self.details = {}
         # Asegurar que el valor esta en rango valido
@@ -487,7 +493,7 @@ Respond ONLY with valid JSON:
 {context}
 
 ANSWER TO EVALUATE:
-{generated[:2000]}
+{generated[:_MAX_RESPONSE_CHARS_FOR_JUDGE]}
 
 Evaluate the faithfulness of the ANSWER with respect to the CONTEXT."""
         
@@ -523,7 +529,7 @@ Evaluate the faithfulness of the ANSWER with respect to the CONTEXT."""
 {query}
 
 ANSWER TO EVALUATE:
-{generated[:2000]}
+{generated[:_MAX_RESPONSE_CHARS_FOR_JUDGE]}
 
 Evaluate the relevance of the ANSWER with respect to the QUESTION."""
         
@@ -556,7 +562,7 @@ PROVIDED CONTEXT:
 {context}
 
 GENERATED ANSWER:
-{generated[:2000]}
+{generated[:_MAX_RESPONSE_CHARS_FOR_JUDGE]}
 
 Evaluate how much of the relevant CONTEXT was utilized in the ANSWER."""
         
@@ -581,7 +587,7 @@ Evaluate how much of the relevant CONTEXT was utilized in the ANSWER."""
         if not context:
             return MetricResult(metric_type=MetricType.FAITHFULNESS, value=0.0, details={"reason": "empty_context"})
         
-        user_prompt = f"""CONTEXT:\n{context}\n\nANSWER TO EVALUATE:\n{generated[:2000]}\n\nEvaluate the faithfulness of the ANSWER with respect to the CONTEXT."""
+        user_prompt = f"""CONTEXT:\n{context}\n\nANSWER TO EVALUATE:\n{generated[:_MAX_RESPONSE_CHARS_FOR_JUDGE]}\n\nEvaluate the faithfulness of the ANSWER with respect to the CONTEXT."""
         return await LLMJudgeMetrics._invoke_judge_async(
             llm_judge=llm_judge,
             system_prompt=LLMJudgeMetrics.FAITHFULNESS_SYSTEM_PROMPT,
@@ -599,7 +605,7 @@ Evaluate how much of the relevant CONTEXT was utilized in the ANSWER."""
         if not query:
             return MetricResult(metric_type=MetricType.ANSWER_RELEVANCE, value=0.0, details={"reason": "empty_query"})
         
-        user_prompt = f"""QUESTION:\n{query}\n\nANSWER TO EVALUATE:\n{generated[:2000]}\n\nEvaluate the relevance of the ANSWER with respect to the QUESTION."""
+        user_prompt = f"""QUESTION:\n{query}\n\nANSWER TO EVALUATE:\n{generated[:_MAX_RESPONSE_CHARS_FOR_JUDGE]}\n\nEvaluate the relevance of the ANSWER with respect to the QUESTION."""
         return await LLMJudgeMetrics._invoke_judge_async(
             llm_judge=llm_judge,
             system_prompt=LLMJudgeMetrics.ANSWER_RELEVANCE_SYSTEM_PROMPT,
@@ -615,7 +621,7 @@ Evaluate how much of the relevant CONTEXT was utilized in the ANSWER."""
         if not generated or not context:
             return MetricResult(metric_type=MetricType.CONTEXT_UTILIZATION, value=0.0, details={"reason": "empty_input"})
         
-        user_prompt = f"""ORIGINAL QUESTION:\n{query}\n\nPROVIDED CONTEXT:\n{context}\n\nGENERATED ANSWER:\n{generated[:2000]}\n\nEvaluate how much of the relevant CONTEXT was utilized in the ANSWER."""
+        user_prompt = f"""ORIGINAL QUESTION:\n{query}\n\nPROVIDED CONTEXT:\n{context}\n\nGENERATED ANSWER:\n{generated[:_MAX_RESPONSE_CHARS_FOR_JUDGE]}\n\nEvaluate how much of the relevant CONTEXT was utilized in the ANSWER."""
         return await LLMJudgeMetrics._invoke_judge_async(
             llm_judge=llm_judge,
             system_prompt=LLMJudgeMetrics.CONTEXT_UTILIZATION_SYSTEM_PROMPT,
@@ -713,17 +719,19 @@ Evaluate how much of the relevant CONTEXT was utilized in the ANSWER."""
         
         # Intentar parseo directo
         try:
-            return json.loads(response_text)
+            result: Dict[str, Any] = json.loads(response_text)
+            return result
         except json.JSONDecodeError:
             pass
-        
+
         # Buscar JSON embebido con regex
         json_pattern = r'\{[^{}]*"score"[^{}]*\}'
         match = re.search(json_pattern, response_text, re.DOTALL)
-        
+
         if match:
             try:
-                return json.loads(match.group())
+                result = json.loads(match.group())
+                return result
             except json.JSONDecodeError:
                 pass
         
