@@ -928,14 +928,17 @@ class MTEBEvaluator:
         if not contents:
             return "[No se encontraron documentos]"
 
-        parts = []
+        separator = "\n\n"
+        parts: List[str] = []
         length = 0
         for i, content in enumerate(contents, 1):
             header = f"[Doc {i}]\n"
-            if length + len(header) + len(content) > max_length:
+            part_len = len(header) + len(content)
+            sep_len = len(separator) if parts else 0
+            if length + sep_len + part_len > max_length:
                 break
             parts.append(f"{header}{content}")
-            length += len(header) + len(content) + 2
+            length += sep_len + part_len
 
         if len(parts) < len(contents):
             logger.debug(
@@ -943,7 +946,7 @@ class MTEBEvaluator:
                 f"({length}/{max_length} chars)"
             )
 
-        return "\n\n".join(parts)
+        return separator.join(parts)
 
     # -----------------------------------------------------------------
     # METRICAS (async)

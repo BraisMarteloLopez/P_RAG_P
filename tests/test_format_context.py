@@ -82,9 +82,9 @@ def test_docs_separated_by_double_newline():
 
 def test_truncation_omits_docs_that_exceed_limit():
     """Docs que no caben en max_chars se omiten (break antes de append)."""
-    # header "[Doc N]\n" = 8 chars, + contenido + 2 (separador \n\n)
-    # Primer doc: header(8) + "aaaa"(4) = 12 chars acumulados (length += 12 + 2 = 14)
-    # Segundo doc: header(8) + "bbbb"(4) = 12 chars adicionales. Total = 14 + 12 = 26
+    # header "[Doc N]\n" = 8 chars
+    # Primer doc: sep_len=0 + part_len(8+4)=12. length=12.
+    # Segundo doc: sep_len=2 + part_len(8+4)=12. Guard: 12+2+12=26 > 20. Break.
     # Con max_context_chars=20, segundo doc no cabe
     ev = _make_evaluator(max_context_chars=20)
     result = ev._format_context(["aaaa", "bbbb"])
