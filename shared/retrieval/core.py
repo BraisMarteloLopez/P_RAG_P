@@ -50,9 +50,9 @@ class RetrievalConfig:
     rrf_k: int = 60
     pre_fusion_k: int = 150
 
-    # Contextual retrieval
-    context_max_tokens: int = 150
-    context_batch_size: int = 10
+    # Contextual retrieval (optimizado para modelos nano)
+    context_max_tokens: int = 100
+    context_batch_size: int = 50
 
     # BM25
     bm25_language: str = "en"
@@ -72,8 +72,8 @@ class RetrievalConfig:
             vector_weight=_env_float("RETRIEVAL_VECTOR_WEIGHT", 0.5),
             pre_fusion_k=_env_int("RETRIEVAL_PRE_FUSION_K", 150),
             rrf_k=_env_int("RETRIEVAL_RRF_K", 60),
-            context_max_tokens=_env_int("RETRIEVAL_CONTEXT_MAX_TOKENS", 150),
-            context_batch_size=_env_int("RETRIEVAL_CONTEXT_BATCH_SIZE", 10),
+            context_max_tokens=_env_int("RETRIEVAL_CONTEXT_MAX_TOKENS", 100),
+            context_batch_size=_env_int("RETRIEVAL_CONTEXT_BATCH_SIZE", 50),
             bm25_language=_env("RETRIEVAL_BM25_LANGUAGE", "en"),
             hnsw_num_threads=_env_int("HNSW_NUM_THREADS", 1),
         )
